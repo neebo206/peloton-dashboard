@@ -125,6 +125,8 @@ class PelotonClient:
         Instructor cadence/resistance targets for a ride class.
         Returns the target_metrics_data dict from ride details, or None.
         """
+        if not ride_id or set(ride_id) == {"0"}:
+            return None
         resp = self.session.get(f"{BASE_URL}/api/ride/{ride_id}/details", timeout=10)
         resp.raise_for_status()
         tmd = resp.json().get("target_metrics_data")
