@@ -1,0 +1,10 @@
+{
+  "active_profile": "primary",
+  "profiles": {
+    "primary": {
+      "email": "your_email@example.com",
+      "session_cookie": "your_peloton_session_id_cookie_value",
+      "user_id": "your_user_id"
+    }
+  }
+}
