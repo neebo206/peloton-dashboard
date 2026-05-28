@@ -137,10 +137,14 @@ class PelotonClient:
         captured: list[str] = []
 
         def on_request(req):
+            # Only capture tokens from Peloton's actual data API to avoid
+            # picking up internal auth/analytics JWTs from auth.onepeloton.com
+            if "api.onepeloton.com" not in req.url:
+                return
             auth = req.headers.get("authorization", "")
             if auth.startswith("Bearer ") and not captured:
                 tok = auth[7:]
-                print(f"[peloton] token captured from request to {req.url[:60]}, prefix={tok[:20]}")
+                print(f"[peloton] token from {req.url[:60]}, len={len(tok)}", flush=True)
                 captured.append(tok)
 
         chromium_path = PelotonClient._find_chromium()
@@ -153,12 +157,29 @@ class PelotonClient:
 
         try:
             with sync_playwright() as pw:
-                launch_kwargs: dict = {"headless": True}
+                launch_kwargs: dict = {
+                    "headless": True,
+                    "args": [
+                        "--disable-blink-features=AutomationControlled",
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                    ],
+                }
                 if chromium_path:
                     launch_kwargs["executable_path"] = chromium_path
                 browser = pw.chromium.launch(**launch_kwargs)
-                ctx = browser.new_context()
+                ctx = browser.new_context(
+                    viewport={"width": 1280, "height": 800},
+                    user_agent=(
+                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                    ),
+                    locale="en-US",
+                )
                 page = ctx.new_page()
+                page.add_init_script(
+                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
+                )
                 page.on("request", on_request)
 
                 page.goto("https://members.onepeloton.com/login",
@@ -171,7 +192,7 @@ class PelotonClient:
                         timeout=6_000,
                     )
                 except PWTimeout:
-                    # Fill the login form manually
+                    print(f"[peloton] filling form at {page.url[:80]}", flush=True)
                     email_input = page.locator('input[name="usernameOrEmail"]')
                     email_input.wait_for(state="visible", timeout=10_000)
                     email_input.click()
