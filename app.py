@@ -42,23 +42,29 @@ def _show_login() -> None:
                 else:
                     instructor = random.choice(_INSTRUCTORS)
                     with st.spinner(f"Checking with {instructor} at Peloton to see if you're legit..."):
-                        try:
-                            token = PelotonClient.get_token_via_playwright(email, password)
-                            if not token:
-                                st.error("Login appeared to succeed but no token was returned.")
-                            elif not PelotonClient.token_valid(token):
-                                st.error(
-                                    f"Login returned an invalid token (prefix: `{token[:30]}`, "
-                                    f"length: {len(token)}). Try the **Paste token** tab instead."
-                                )
-                            else:
-                                st.session_state.peloton_token = token
-                                st.session_state.peloton_email = email
-                                st.session_state.login_instructor = instructor
-                                st.cache_data.clear()
-                                st.rerun()
-                        except Exception as exc:
-                            st.error(f"Login failed: {exc}")
+                        token = None
+                        err   = None
+                        for fn in (
+                            PelotonClient.get_token_via_http,
+                            PelotonClient.get_token_via_playwright,
+                        ):
+                            try:
+                                token = fn(email, password)
+                                if PelotonClient.token_valid(token):
+                                    break
+                                token = None
+                            except Exception as exc:
+                                err = exc
+                                token = None
+
+                        if token:
+                            st.session_state.peloton_token = token
+                            st.session_state.peloton_email = email
+                            st.session_state.login_instructor = instructor
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error(f"Login failed: {err}")
 
         with tab_manual:
             st.caption(

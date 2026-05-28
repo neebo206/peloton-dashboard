@@ -1,8 +1,11 @@
 """Peloton unofficial API client."""
 
 import base64
+import hashlib
 import json
+import secrets
 import time
+import urllib.parse
 from pathlib import Path
 
 import requests
@@ -107,6 +110,106 @@ class PelotonClient:
     def _apply_token(self, token: str) -> None:
         self.session.headers["Authorization"] = f"Bearer {token}"
         self.user_id = self._jwt_claims(token).get("http://onepeloton.com/user_id", "")
+
+    # ------------------------------------------------------------------
+    # HTTP-based Auth0 PKCE login — no browser needed
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def get_token_via_http(email: str, password: str) -> str:
+        """
+        Authenticate via Auth0 cross-origin auth + PKCE using plain HTTP.
+        Bypasses PerimeterX entirely because there is no browser to fingerprint.
+        Raises RuntimeError on failure.
+        """
+        _DOMAIN    = "auth.onepeloton.com"
+        _CLIENT_ID = _AUTH0_CLIENT
+        _REDIRECT  = "https://members.onepeloton.com/"
+
+        # PKCE
+        code_verifier  = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+        state = secrets.token_urlsafe(16)
+
+        sess = requests.Session()
+        sess.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Origin":  "https://members.onepeloton.com",
+            "Referer": "https://members.onepeloton.com/",
+        })
+
+        # Step 1 — cross-origin authenticate → login_ticket
+        co = sess.post(
+            f"https://{_DOMAIN}/co/authenticate",
+            json={
+                "client_id":       _CLIENT_ID,
+                "username":        email,
+                "password":        password,
+                "credential_type": "http://auth0.com/oauth/grant-type/password-realm",
+                "realm":           "Username-Password-Authentication",
+            },
+        )
+        if co.status_code != 200:
+            raise RuntimeError(
+                f"Auth0 /co/authenticate failed ({co.status_code}): {co.text[:300]}"
+            )
+        co_data = co.json()
+        ticket = co_data.get("login_ticket")
+        if not ticket:
+            raise RuntimeError(f"/co/authenticate returned no login_ticket: {co_data}")
+
+        # Step 2 — exchange ticket for auth code via /authorize (follow redirect manually)
+        auth = sess.get(
+            f"https://{_DOMAIN}/authorize",
+            params={
+                "client_id":            _CLIENT_ID,
+                "response_type":        "code",
+                "redirect_uri":         _REDIRECT,
+                "scope":                "openid profile email",
+                "state":                state,
+                "code_challenge":       code_challenge,
+                "code_challenge_method":"S256",
+                "login_ticket":         ticket,
+                "referrer":             _REDIRECT,
+            },
+            allow_redirects=False,
+        )
+        location = auth.headers.get("Location", "")
+        if "code=" not in location:
+            raise RuntimeError(
+                f"/authorize didn't redirect with code "
+                f"({auth.status_code}): {location[:300]}"
+            )
+        code = urllib.parse.parse_qs(
+            urllib.parse.urlparse(location).query
+        ).get("code", [None])[0]
+        if not code:
+            raise RuntimeError(f"No code found in redirect: {location[:300]}")
+
+        # Step 3 — exchange code for access_token
+        tok = sess.post(
+            f"https://{_DOMAIN}/oauth/token",
+            json={
+                "grant_type":    "authorization_code",
+                "client_id":     _CLIENT_ID,
+                "code":          code,
+                "redirect_uri":  _REDIRECT,
+                "code_verifier": code_verifier,
+            },
+        )
+        if tok.status_code != 200:
+            raise RuntimeError(
+                f"Token exchange failed ({tok.status_code}): {tok.text[:300]}"
+            )
+        access_token = tok.json().get("access_token")
+        if not access_token:
+            raise RuntimeError(f"No access_token in token response: {tok.text[:200]}")
+        return access_token
 
     # ------------------------------------------------------------------
     # Playwright login — standalone, callable without a client instance
