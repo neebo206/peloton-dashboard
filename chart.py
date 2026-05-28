@@ -246,3 +246,161 @@ def plot_workout_plotly(
         fig.update_yaxes(title_text="Cumulative kJ", rangemode="tozero", row=3, col=1)
 
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Data smoothing
+# ---------------------------------------------------------------------------
+
+def smooth_series(values: list[float], window: int) -> list[float]:
+    """Centered rolling mean to reduce per-second noise in time-series data."""
+    if window <= 1 or not values:
+        return values
+    return pd.Series(values).rolling(window, min_periods=1, center=True).mean().tolist()
+
+
+# ---------------------------------------------------------------------------
+# Shared x-axis tick helper
+# ---------------------------------------------------------------------------
+
+def _x_ticks(n: int) -> dict:
+    vals = list(range(0, n, 60))
+    return dict(
+        tickvals=vals,
+        ticktext=[f"{v // 60}:{v % 60:02d}" for v in vals],
+        title_text="Time into ride",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Individual chart functions (used by the Streamlit app for reorderable panels)
+# ---------------------------------------------------------------------------
+
+def plot_watts_chart(
+    meta: dict,
+    seconds: list[int],
+    actual_watts: list[float],
+    band: pd.DataFrame | None,
+    y_max: int = 0,
+) -> go.Figure:
+    fig = go.Figure()
+
+    if band is not None:
+        bs = band.index.tolist()
+        fig.add_trace(go.Scatter(
+            x=bs, y=band["watt_ceiling"].tolist(),
+            mode="lines", line=dict(color="steelblue", width=1),
+            showlegend=False, hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=bs, y=band["watt_floor"].tolist(),
+            mode="lines", fill="tonexty",
+            fillcolor="rgba(70, 130, 180, 0.2)",
+            line=dict(color="steelblue", width=1),
+            name="Target band",
+        ))
+
+    fig.add_trace(go.Scatter(
+        x=seconds, y=actual_watts,
+        mode="lines", line=dict(color="tomato", width=1.3),
+        name="Actual output (W)",
+    ))
+
+    title = meta.get("title", "Peloton Workout")
+    instructor = meta.get("instructor_name", "")
+    header = f"<b>{title}{'  ·  ' + instructor if instructor else ''}</b>"
+    ts = meta.get("start_time", 0)
+    date_str = datetime.fromtimestamp(ts).strftime("%b %d, %Y  %I:%M %p") if ts else ""
+    kj = (meta.get("total_work") or 0) / 1000
+    sub = f"{date_str}  ·  {kj:.0f} kJ total output" if kj else date_str
+    if band is None:
+        sub += "  (no instructor target data available)"
+
+    y_axis: dict = dict(title_text="Watts")
+    if y_max > 0:
+        y_axis["range"] = [0, y_max]
+
+    fig.update_layout(
+        title=dict(text=f"{header}<br><sup>{sub}</sup>", x=0.5, xanchor="center"),
+        height=560, hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(t=110),
+        xaxis=_x_ticks(len(seconds)),
+        yaxis=y_axis,
+    )
+    return fig
+
+
+def plot_band_position_chart(
+    seconds: list[int],
+    actual_watts: list[float],
+    band: pd.DataFrame,
+) -> go.Figure:
+    positions: list[float | None] = []
+    for sec, w in enumerate(actual_watts):
+        if sec in band.index:
+            fl = band.at[sec, "watt_floor"]
+            ce = band.at[sec, "watt_ceiling"]
+            span = ce - fl
+            positions.append(((w - fl) / span * 100) if span > 0 else 50.0)
+        else:
+            positions.append(None)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=seconds, y=positions,
+        mode="lines", line=dict(color="mediumpurple", width=1),
+        name="Band position %",
+    ))
+    for y_val, color, dash in [(0, "steelblue", "dash"), (100, "steelblue", "dash"), (50, "gray", "dot")]:
+        fig.add_hline(y=y_val, line_color=color, line_dash=dash, line_width=0.8)
+
+    fig.update_layout(
+        title=dict(text="Band Position", x=0.5, xanchor="center"),
+        height=380, hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(t=60),
+        xaxis=_x_ticks(len(seconds)),
+        yaxis=dict(title_text="Band %"),
+    )
+    return fig
+
+
+def plot_cumulative_chart(
+    seconds: list[int],
+    actual_watts: list[float],
+    band: pd.DataFrame,
+) -> go.Figure:
+    cum_actual = np.cumsum(actual_watts) / 1000
+    band_re = band.reindex(seconds, fill_value=0)
+    cum_max = np.cumsum(band_re["watt_ceiling"].values) / 1000
+    cum_min = np.cumsum(band_re["watt_floor"].values) / 1000
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=seconds, y=list(cum_max),
+        mode="lines", line=dict(color="steelblue", width=1),
+        showlegend=False, hoverinfo="skip",
+    ))
+    fig.add_trace(go.Scatter(
+        x=seconds, y=list(cum_min),
+        mode="lines", fill="tonexty",
+        fillcolor="rgba(70, 130, 180, 0.2)",
+        line=dict(color="steelblue", width=1),
+        name="Target range (kJ)",
+    ))
+    fig.add_trace(go.Scatter(
+        x=seconds, y=list(cum_actual),
+        mode="lines", line=dict(color="tomato", width=1.3),
+        name="Actual (kJ)",
+    ))
+
+    fig.update_layout(
+        title=dict(text="Cumulative Output (kJ)", x=0.5, xanchor="center"),
+        height=420, hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(t=60),
+        xaxis=_x_ticks(len(seconds)),
+        yaxis=dict(title_text="kJ", rangemode="tozero"),
+    )
+    return fig

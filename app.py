@@ -7,13 +7,32 @@ from datetime import datetime
 
 import streamlit as st
 
+try:
+    from streamlit_autorefresh import st_autorefresh
+    _HAS_AUTOREFRESH = True
+except ImportError:
+    _HAS_AUTOREFRESH = False
+
+try:
+    from streamlit_sortables import sort_items
+    _HAS_SORTABLES = True
+except ImportError:
+    _HAS_SORTABLES = False
+
 _INSTRUCTORS = [
     "Olivia", "Robin", "Alex", "Emma", "Cody",
     "Ally", "Christine", "Hannah", "Kendall", "Leanne",
     "Matt", "Jess", "Denis", "Camila", "Ben",
 ]
 
-from chart import extract_metric, plot_workout_plotly
+from chart import (
+    build_target_band,
+    extract_metric,
+    plot_band_position_chart,
+    plot_cumulative_chart,
+    plot_watts_chart,
+    smooth_series,
+)
 from client import PelotonClient
 from watt_model import calibrate, estimate_watts
 
@@ -67,7 +86,6 @@ if "peloton_token" not in st.session_state:
 
 token = st.session_state.peloton_token
 
-# Refresh token if it's near expiry (re-runs Playwright silently)
 if not PelotonClient.token_valid(token):
     with st.spinner("Session expired — logging in again..."):
         try:
@@ -105,11 +123,39 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
+    st.header("Live Ride")
+    live_ride = st.toggle("Enable live tracking")
+    if live_ride:
+        refresh_interval = int(st.number_input(
+            "Refresh interval (seconds)", min_value=5, max_value=60, value=5, step=5,
+        ))
+    else:
+        refresh_interval = 5
+
+    st.divider()
     st.header("Settings")
     limit = st.number_input("Workouts to load", min_value=5, max_value=100, value=20, step=5)
+    smooth_n = int(st.number_input(
+        "Smoothing window (seconds)", min_value=1, max_value=30, value=10, step=1,
+        help="Rolling average over this many seconds. 1 = no smoothing.",
+    ))
+    y_max = int(st.number_input(
+        "Y-axis max watts (0 = auto)", min_value=0, max_value=1000, value=0, step=50,
+    ))
     if st.button("Refresh workout list", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Live ride — auto-refresh and cache invalidation
+# ---------------------------------------------------------------------------
+
+if live_ride:
+    if _HAS_AUTOREFRESH:
+        st_autorefresh(interval=refresh_interval * 1000, key="live_ride_refresh")
+    st.cache_data.clear()
+    st.info(f"Live tracking active — refreshing every {refresh_interval}s", icon="🔴")
 
 
 # ---------------------------------------------------------------------------
@@ -146,13 +192,13 @@ if not workouts:
 def _label(w: dict) -> str:
     ride = w.get("ride") or {}
     title = ride.get("title", "Unknown")
-    instructor = (ride.get("instructor") or {}).get("name", "")
+    instructor_name = (ride.get("instructor") or {}).get("name", "")
     ts = w.get("start_time", 0)
     date = datetime.fromtimestamp(ts).strftime("%b %d, %Y") if ts else "?"
     kj = (w.get("total_work") or 0) / 1000
     parts = [date, title]
-    if instructor:
-        parts.append(instructor)
+    if instructor_name:
+        parts.append(instructor_name)
     if kj:
         parts.append(f"{kj:.0f} kJ")
     return "  ·  ".join(parts)
@@ -211,8 +257,12 @@ if actual_w and cad and res:
 
 
 # ---------------------------------------------------------------------------
-# Chart
+# Chart data prep
 # ---------------------------------------------------------------------------
+
+if not actual_w:
+    st.error("No output data found for this workout.")
+    st.stop()
 
 meta = {
     "title":           ride.get("title", "Peloton Workout"),
@@ -222,8 +272,65 @@ meta = {
     "total_work":      workout.get("total_work", 0),
 }
 
-fig = plot_workout_plotly(meta, perf, target, estimate_watts)
-if fig:
-    st.plotly_chart(fig, width="stretch")
+seconds    = list(range(len(actual_w)))
+smoothed_w = smooth_series(actual_w, smooth_n)
+band       = build_target_band(target, estimate_watts)
+has_band   = band is not None
+
+
+# ---------------------------------------------------------------------------
+# Chart order (drag-to-reorder)
+# ---------------------------------------------------------------------------
+
+_ALL_CHARTS = ["cumulative", "watts", "band_position"]
+_CHART_LABELS = {
+    "cumulative":    "Cumulative Output (kJ)",
+    "watts":         "Output (W)",
+    "band_position": "Band Position %",
+}
+_LABEL_TO_ID = {v: k for k, v in _CHART_LABELS.items()}
+
+if has_band:
+    if "chart_order" not in st.session_state:
+        st.session_state.chart_order = list(_ALL_CHARTS)
+    order = [c for c in st.session_state.chart_order if c in _ALL_CHARTS]
+    for c in _ALL_CHARTS:
+        if c not in order:
+            order.append(c)
+    st.session_state.chart_order = order
+
+    if _HAS_SORTABLES:
+        with st.sidebar:
+            st.divider()
+            st.header("Chart Order")
+            st.caption("Drag to reorder")
+            sorted_labels = sort_items([_CHART_LABELS[c] for c in st.session_state.chart_order])
+            new_order = [_LABEL_TO_ID[l] for l in sorted_labels if l in _LABEL_TO_ID]
+            if new_order != list(st.session_state.chart_order):
+                st.session_state.chart_order = new_order
+
+    charts = list(st.session_state.chart_order)
 else:
-    st.error("No output data found for this workout.")
+    charts = ["watts"]
+
+
+# ---------------------------------------------------------------------------
+# Render charts
+# ---------------------------------------------------------------------------
+
+for chart_id in charts:
+    if chart_id == "watts":
+        st.plotly_chart(
+            plot_watts_chart(meta, seconds, smoothed_w, band, y_max),
+            use_container_width=True,
+        )
+    elif chart_id == "band_position" and band is not None:
+        st.plotly_chart(
+            plot_band_position_chart(seconds, smoothed_w, band),
+            use_container_width=True,
+        )
+    elif chart_id == "cumulative" and band is not None:
+        st.plotly_chart(
+            plot_cumulative_chart(seconds, actual_w, band),
+            use_container_width=True,
+        )
