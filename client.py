@@ -192,11 +192,33 @@ class PelotonClient:
                     pass
 
                 if not captured:
-                    page.goto("https://members.onepeloton.com/profile", timeout=30_000)
+                    # Navigate to overview which triggers many API calls
+                    page.goto("https://members.onepeloton.com/members/me/overview",
+                              timeout=30_000)
                     try:
                         page.wait_for_load_state("networkidle", timeout=30_000)
                     except PWTimeout:
                         pass
+
+                if not captured:
+                    # Fallback: pull token directly from Auth0's localStorage cache
+                    token_js = page.evaluate("""() => {
+                        for (const store of [localStorage, sessionStorage]) {
+                            for (let i = 0; i < store.length; i++) {
+                                const val = store.getItem(store.key(i)) || '';
+                                if (val.startsWith('eyJ')) return val;
+                                try {
+                                    const o = JSON.parse(val);
+                                    if (o && o.body && o.body.access_token)
+                                        return o.body.access_token;
+                                    if (o && o.access_token) return o.access_token;
+                                } catch (e) {}
+                            }
+                        }
+                        return null;
+                    }""")
+                    if token_js:
+                        captured.append(token_js)
 
                 browser.close()
 
