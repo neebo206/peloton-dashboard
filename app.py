@@ -42,19 +42,20 @@ def _show_login() -> None:
                 else:
                     instructor = random.choice(_INSTRUCTORS)
                     with st.spinner(f"Checking with {instructor} at Peloton to see if you're legit..."):
-                        token = None
-                        err   = None
-                        for fn in (
-                            PelotonClient.get_token_via_http,
-                            PelotonClient.get_token_via_playwright,
+                        token  = None
+                        errors = {}
+                        for name, fn in (
+                            ("HTTP",      PelotonClient.get_token_via_http),
+                            ("Playwright",PelotonClient.get_token_via_playwright),
                         ):
                             try:
                                 token = fn(email, password)
                                 if PelotonClient.token_valid(token):
                                     break
+                                errors[name] = f"invalid token (len={len(token or '')})"
                                 token = None
                             except Exception as exc:
-                                err = exc
+                                errors[name] = str(exc)
                                 token = None
 
                         if token:
@@ -64,7 +65,8 @@ def _show_login() -> None:
                             st.cache_data.clear()
                             st.rerun()
                         else:
-                            st.error(f"Login failed: {err}")
+                            for name, msg in errors.items():
+                                st.error(f"{name}: {msg}")
 
         with tab_manual:
             st.caption(

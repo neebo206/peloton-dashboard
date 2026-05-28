@@ -144,6 +144,7 @@ class PelotonClient:
         })
 
         # Step 1 — cross-origin authenticate → login_ticket
+        print("[peloton] HTTP auth: calling /co/authenticate", flush=True)
         co = sess.post(
             f"https://{_DOMAIN}/co/authenticate",
             json={
@@ -154,6 +155,7 @@ class PelotonClient:
                 "realm":           "Username-Password-Authentication",
             },
         )
+        print(f"[peloton] HTTP auth: /co/authenticate -> {co.status_code} {co.text[:200]}", flush=True)
         if co.status_code != 200:
             raise RuntimeError(
                 f"Auth0 /co/authenticate failed ({co.status_code}): {co.text[:300]}"
