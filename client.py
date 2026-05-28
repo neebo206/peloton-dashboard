@@ -141,9 +141,16 @@ class PelotonClient:
             if auth.startswith("Bearer ") and not captured:
                 captured.append(auth[7:])
 
+        chromium_path = PelotonClient._find_chromium()
+        if not chromium_path:
+            import subprocess, sys
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                check=False, capture_output=True,
+            )
+
         try:
             with sync_playwright() as pw:
-                chromium_path = PelotonClient._find_chromium()
                 launch_kwargs: dict = {"headless": True}
                 if chromium_path:
                     launch_kwargs["executable_path"] = chromium_path
