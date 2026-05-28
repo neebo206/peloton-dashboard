@@ -170,9 +170,14 @@ class PelotonClient:
                     )
                 except PWTimeout:
                     # Fill the login form manually
-                    page.locator('input[name="usernameOrEmail"]').fill(email, timeout=10_000)
-                    page.locator('input[name="password"]').fill(password)
-                    page.locator('button[type="submit"]').first.click()
+                    email_input = page.locator('input[name="usernameOrEmail"]')
+                    email_input.wait_for(state="visible", timeout=10_000)
+                    email_input.press_sequentially(email, delay=50)
+                    pwd_input = page.locator('input[name="password"]')
+                    pwd_input.press_sequentially(password, delay=50)
+                    submit = page.locator('button[type="submit"]').first
+                    submit.wait_for(state="enabled", timeout=10_000)
+                    submit.click()
                     page.wait_for_url(
                         lambda url: "members.onepeloton.com" in url and "/login" not in url,
                         timeout=30_000,
