@@ -212,7 +212,7 @@ class PelotonClient:
                         for (const store of stores) {
                             for (let i = 0; i < store.length; i++) {
                                 const val = store.getItem(store.key(i)) || '';
-                                const m = val.match(/"access_token":"(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)"/);
+                                const m = val.match(/"access_token":"(eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+)"/);
                                 if (m) return m[1];
                             }
                         }
@@ -220,7 +220,7 @@ class PelotonClient:
                         for (const store of stores) {
                             for (let i = 0; i < store.length; i++) {
                                 const val = store.getItem(store.key(i)) || '';
-                                if (/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(val))
+                                if (/^eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(val))
                                     return val;
                             }
                         }
