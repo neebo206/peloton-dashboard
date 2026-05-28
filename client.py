@@ -175,9 +175,10 @@ class PelotonClient:
                     email_input.press_sequentially(email, delay=50)
                     pwd_input = page.locator('input[name="password"]')
                     pwd_input.press_sequentially(password, delay=50)
-                    submit = page.locator('button[type="submit"]').first
-                    submit.wait_for(state="enabled", timeout=10_000)
-                    submit.click()
+                    page.wait_for_selector(
+                        'button[type="submit"]:not([disabled])', timeout=10_000
+                    )
+                    page.locator('button[type="submit"]').first.click()
                     page.wait_for_url(
                         lambda url: "members.onepeloton.com" in url and "/login" not in url,
                         timeout=30_000,
