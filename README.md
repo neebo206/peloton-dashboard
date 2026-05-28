@@ -20,6 +20,7 @@ A local web dashboard that pulls your Peloton ride history and plots your actual
 
 ## Setup
 
+
 ### 1. Install dependencies
 
 ```bash
