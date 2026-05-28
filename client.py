@@ -178,21 +178,28 @@ class PelotonClient:
                     pwd_input.click()
                     pwd_input.press_sequentially(password, delay=50)
                     pwd_input.press("Enter")
-                    page.wait_for_url(
-                        lambda url: "members.onepeloton.com" in url and "/login" not in url,
-                        timeout=30_000,
-                    )
+                    # Don't check for a specific URL — the Auth0 redirect
+                    # chain may pass through domains that wouldn't match.
+                    # Just wait for the network to settle.
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=60_000)
+                    except PWTimeout:
+                        pass
 
-                page.wait_for_load_state("networkidle", timeout=30_000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=30_000)
+                except PWTimeout:
+                    pass
 
                 if not captured:
                     page.goto("https://members.onepeloton.com/profile", timeout=30_000)
-                    page.wait_for_load_state("networkidle", timeout=30_000)
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=30_000)
+                    except PWTimeout:
+                        pass
 
                 browser.close()
 
-        except PWTimeout as exc:
-            raise RuntimeError(f"Browser login timed out: {exc}")
         except Exception as exc:
             raise RuntimeError(f"Browser login failed: {exc}")
 
