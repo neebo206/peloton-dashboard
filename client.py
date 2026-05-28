@@ -139,7 +139,9 @@ class PelotonClient:
         def on_request(req):
             auth = req.headers.get("authorization", "")
             if auth.startswith("Bearer ") and not captured:
-                captured.append(auth[7:])
+                tok = auth[7:]
+                print(f"[peloton] token captured from request to {req.url[:60]}, prefix={tok[:20]}")
+                captured.append(tok)
 
         chromium_path = PelotonClient._find_chromium()
         if not chromium_path:
@@ -201,12 +203,14 @@ class PelotonClient:
                         pass
 
                 if not captured:
-                    # Fallback: pull token directly from Auth0's localStorage cache
+                    # Fallback: pull token directly from Auth0's localStorage cache.
+                    # Prioritise the structured cache entry so we get access_token,
+                    # not an id_token or other JWT that happens to start with eyJ.
                     token_js = page.evaluate("""() => {
+                        // Pass 1: Auth0 SPA SDK structured cache
                         for (const store of [localStorage, sessionStorage]) {
                             for (let i = 0; i < store.length; i++) {
                                 const val = store.getItem(store.key(i)) || '';
-                                if (val.startsWith('eyJ')) return val;
                                 try {
                                     const o = JSON.parse(val);
                                     if (o && o.body && o.body.access_token)
@@ -215,10 +219,20 @@ class PelotonClient:
                                 } catch (e) {}
                             }
                         }
+                        // Pass 2: raw JWT string (less reliable)
+                        for (const store of [localStorage, sessionStorage]) {
+                            for (let i = 0; i < store.length; i++) {
+                                const val = store.getItem(store.key(i)) || '';
+                                if (val.startsWith('eyJ')) return val;
+                            }
+                        }
                         return null;
                     }""")
                     if token_js:
+                        print(f"[peloton] token captured from storage, prefix={token_js[:20]}")
                         captured.append(token_js)
+                    else:
+                        print("[peloton] no token found in localStorage/sessionStorage")
 
                 browser.close()
 

@@ -42,6 +42,17 @@ def _show_login() -> None:
             with st.spinner(f"Checking with {instructor} at Peloton to see if you're legit..."):
                 try:
                     token = PelotonClient.get_token_via_playwright(email, password)
+                    if not token:
+                        st.error("Login appeared to succeed but no token was returned.")
+                        return
+                    if not PelotonClient.token_valid(token):
+                        st.error(
+                            f"Login returned a token that looks invalid "
+                            f"(prefix: `{token[:30]}`, length: {len(token)}). "
+                            f"This usually means the wrong token type was captured. "
+                            f"Check Streamlit Cloud logs for details."
+                        )
+                        return
                     st.session_state.peloton_token = token
                     st.session_state.peloton_email = email
                     st.session_state.login_instructor = instructor
