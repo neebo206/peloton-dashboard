@@ -8,12 +8,6 @@ from datetime import datetime
 import streamlit as st
 
 try:
-    from streamlit_autorefresh import st_autorefresh
-    _HAS_AUTOREFRESH = True
-except ImportError:
-    _HAS_AUTOREFRESH = False
-
-try:
     from streamlit_sortables import sort_items
     _HAS_SORTABLES = True
 except ImportError:
@@ -28,9 +22,9 @@ _INSTRUCTORS = [
 from chart import (
     build_target_band,
     extract_metric,
-    plot_band_position_chart,
-    plot_cumulative_chart,
-    plot_watts_chart,
+    plot_band_position_chart_altair as plot_band_position_chart,
+    plot_cumulative_chart_altair as plot_cumulative_chart,
+    plot_watts_chart_altair as plot_watts_chart,
     smooth_series,
 )
 from client import PelotonClient
@@ -109,6 +103,15 @@ if "login_instructor" in st.session_state:
     instructor = st.session_state.pop("login_instructor")
     st.toast(f"{instructor} likes you! You're in.", icon="🚴")
 
+# Suppress the opacity fade Streamlit applies to stale elements during fragment reruns
+st.markdown(
+    "<style>"
+    "[data-stale]{opacity:1!important;transition:none!important;animation:none!important}"
+    "[data-stale] *{opacity:1!important;transition:none!important;animation:none!important}"
+    "</style>",
+    unsafe_allow_html=True,
+)
+
 
 # ---------------------------------------------------------------------------
 # Sidebar
@@ -129,6 +132,7 @@ with st.sidebar:
         refresh_interval = int(st.number_input(
             "Refresh interval (seconds)", min_value=5, max_value=60, value=5, step=5,
         ))
+        st.caption("🔴 Live tracking enabled")
     else:
         refresh_interval = 5
 
@@ -148,18 +152,7 @@ with st.sidebar:
 
 
 # ---------------------------------------------------------------------------
-# Live ride — auto-refresh and cache invalidation
-# ---------------------------------------------------------------------------
-
-if live_ride:
-    if _HAS_AUTOREFRESH:
-        st_autorefresh(interval=refresh_interval * 1000, key="live_ride_refresh")
-    st.cache_data.clear()
-    st.info(f"Live tracking active — refreshing every {refresh_interval}s", icon="🔴")
-
-
-# ---------------------------------------------------------------------------
-# Cached data fetchers (keyed on user_id so switching accounts works cleanly)
+# Cached data fetchers
 # ---------------------------------------------------------------------------
 
 @st.cache_data
@@ -207,62 +200,15 @@ def _label(w: dict) -> str:
 labels = [_label(w) for w in workouts]
 idx = st.selectbox("Select a ride", range(len(labels)), format_func=lambda i: labels[i])
 
-workout = workouts[idx]
-ride    = workout.get("ride") or {}
+workout    = workouts[idx]
+ride       = workout.get("ride") or {}
 ride_id    = ride.get("id")
 workout_id = workout["id"]
 instructor = (ride.get("instructor") or {}).get("name", "")
-ts       = workout.get("start_time", 0)
-kj       = (workout.get("total_work") or 0) / 1000
-duration = ride.get("duration", 0)
-
-
-# ---------------------------------------------------------------------------
-# Summary metrics
-# ---------------------------------------------------------------------------
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Date", datetime.fromtimestamp(ts).strftime("%b %d, %Y  %I:%M %p") if ts else "—")
-c2.metric("Instructor", instructor or "—")
-c3.metric("Duration", f"{duration // 60} min" if duration else "—")
-c4.metric("Total output", f"{kj:.0f} kJ" if kj else "—")
-
-
-# ---------------------------------------------------------------------------
-# Fetch ride data
-# ---------------------------------------------------------------------------
-
-with st.spinner("Fetching ride data..."):
-    perf   = get_performance(client.user_id, workout_id)
-    has_real_ride = ride_id and set(ride_id) != {"0"}
-    target = get_target(client.user_id, ride_id) if has_real_ride else None
-
-
-# ---------------------------------------------------------------------------
-# Watt model accuracy
-# ---------------------------------------------------------------------------
-
-actual_w = extract_metric(perf, "output")
-cad      = extract_metric(perf, "cadence")
-res      = extract_metric(perf, "resistance")
-
-if actual_w and cad and res:
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        calibrate(cad, res, actual_w)
-    cal_text = buf.getvalue().strip()
-    if cal_text:
-        with st.expander("Watt model accuracy"):
-            st.code(cal_text)
-
-
-# ---------------------------------------------------------------------------
-# Chart data prep
-# ---------------------------------------------------------------------------
-
-if not actual_w:
-    st.error("No output data found for this workout.")
-    st.stop()
+ts         = workout.get("start_time", 0)
+kj         = (workout.get("total_work") or 0) / 1000
+duration   = ride.get("duration", 0)
+has_real_ride = bool(ride_id and set(ride_id) != {"0"})
 
 meta = {
     "title":           ride.get("title", "Peloton Workout"),
@@ -272,14 +218,9 @@ meta = {
     "total_work":      workout.get("total_work", 0),
 }
 
-seconds    = list(range(len(actual_w)))
-smoothed_w = smooth_series(actual_w, smooth_n)
-band       = build_target_band(target, estimate_watts)
-has_band   = band is not None
-
 
 # ---------------------------------------------------------------------------
-# Chart order (drag-to-reorder)
+# Chart order — initialise and show sortable in sidebar
 # ---------------------------------------------------------------------------
 
 _ALL_CHARTS = ["cumulative", "watts", "band_position"]
@@ -290,7 +231,7 @@ _CHART_LABELS = {
 }
 _LABEL_TO_ID = {v: k for k, v in _CHART_LABELS.items()}
 
-if has_band:
+if has_real_ride:
     if "chart_order" not in st.session_state:
         st.session_state.chart_order = list(_ALL_CHARTS)
     order = [c for c in st.session_state.chart_order if c in _ALL_CHARTS]
@@ -309,37 +250,81 @@ if has_band:
             if new_order != list(st.session_state.chart_order):
                 st.session_state.chart_order = new_order
 
-    charts = list(st.session_state.chart_order)
-else:
-    charts = ["watts"]
-
 
 # ---------------------------------------------------------------------------
-# Render charts
+# Fragment: fetch live data + render charts
+# Reruns on its own timer in live mode — no full-page fade.
 # ---------------------------------------------------------------------------
 
-for chart_id in charts:
-    if chart_id == "watts":
-        st.plotly_chart(
-            plot_watts_chart(meta, seconds, smoothed_w, band, y_max),
-            use_container_width=True,
-        )
-    elif chart_id == "band_position" and band is not None:
-        _tooltip = (
-            "Total output as a percentage of the maximum score defined by "
-            "upper limits of the instructor’s cadence and resistance."
-        )
-        st.markdown(
-            f'<p style="font-size:1rem;font-weight:600;cursor:help;margin-bottom:0" '
-            f'title="{_tooltip}">Total Output Percentage &nbsp;&#x2139;&#xFE0F;</p>',
-            unsafe_allow_html=True,
-        )
-        st.plotly_chart(
-            plot_band_position_chart(seconds, smoothed_w, band),
-            use_container_width=True,
-        )
-    elif chart_id == "cumulative" and band is not None:
-        st.plotly_chart(
-            plot_cumulative_chart(seconds, actual_w, band),
-            use_container_width=True,
-        )
+@st.fragment(run_every=refresh_interval if live_ride else None)
+def _render_charts() -> None:
+    if live_ride:
+        st.toast("Refreshing...", icon="🔄")
+        perf   = client.get_performance_graph(workout_id)
+        target = client.get_target_metrics(ride_id) if has_real_ride else None
+    else:
+        perf   = get_performance(client.user_id, workout_id)
+        target = get_target(client.user_id, ride_id) if has_real_ride else None
+
+    actual_w = extract_metric(perf, "output")
+
+    # Summary metrics — total output computed from fresh performance data
+    live_kj = sum(actual_w) / 1000 if actual_w else kj
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Date", datetime.fromtimestamp(ts).strftime("%b %d, %Y  %I:%M %p") if ts else "—")
+    c2.metric("Instructor", instructor or "—")
+    c3.metric("Duration", f"{duration // 60} min" if duration else "—")
+    c4.metric("Total output", f"{live_kj:.1f} kJ" if live_kj else "—")
+
+    cad      = extract_metric(perf, "cadence")
+    res      = extract_metric(perf, "resistance")
+
+    if actual_w and cad and res:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            calibrate(cad, res, actual_w)
+        cal_text = buf.getvalue().strip()
+        if cal_text:
+            with st.expander("Watt model accuracy"):
+                st.code(cal_text)
+
+    if not actual_w:
+        st.error("No output data found for this workout.")
+        return
+
+    seconds    = list(range(len(actual_w)))
+    smoothed_w = smooth_series(actual_w, smooth_n)
+    band       = build_target_band(target, estimate_watts)
+    has_band   = band is not None
+
+    charts = list(st.session_state.get("chart_order", _ALL_CHARTS)) if has_band else ["watts"]
+
+    _tooltip = (
+        "Total output as a percentage of the maximum score defined by "
+        "upper limits of the instructor's cadence and resistance."
+    )
+
+    for chart_id in charts:
+        if chart_id == "watts":
+            st.altair_chart(
+                plot_watts_chart(meta, seconds, smoothed_w, band, y_max),
+                use_container_width=True,
+            )
+        elif chart_id == "band_position" and band is not None:
+            st.markdown(
+                f'<p style="font-size:1rem;font-weight:600;cursor:help;margin-bottom:0" '
+                f'title="{_tooltip}">Total Output Percentage &nbsp;&#x2139;&#xFE0F;</p>',
+                unsafe_allow_html=True,
+            )
+            st.altair_chart(
+                plot_band_position_chart(seconds, smoothed_w, band),
+                use_container_width=True,
+            )
+        elif chart_id == "cumulative" and band is not None:
+            st.altair_chart(
+                plot_cumulative_chart(seconds, actual_w, band),
+                use_container_width=True,
+            )
+
+
+_render_charts()

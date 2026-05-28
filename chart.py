@@ -5,10 +5,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
+import altair as alt
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+# Vega expression: format seconds as M:SS for axis tick labels
+_MM_SS = (
+    "floor(datum.value/60)"
+    "+':'"
+    "+(datum.value%60<10?'0':'')"
+    "+floor(datum.value%60)"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +265,7 @@ def smooth_series(values: list[float], window: int) -> list[float]:
     """Centered rolling mean to reduce per-second noise in time-series data."""
     if window <= 1 or not values:
         return values
-    return pd.Series(values).rolling(window, min_periods=1, center=True).mean().tolist()
+    return pd.Series(values).rolling(window, min_periods=1, center=False).mean().tolist()
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +330,7 @@ def plot_watts_chart(
         y_axis["range"] = [0, y_max]
 
     fig.update_layout(
+        uirevision="watts",
         title=dict(text=f"{header}<br><sup>{sub}</sup>", x=0.5, xanchor="center"),
         height=560, hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -356,6 +366,7 @@ def plot_band_position_chart(
         fig.add_hline(y=y_val, line_color=color, line_dash=dash, line_width=0.8)
 
     fig.update_layout(
+        uirevision="band_position",
         height=380, hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(t=20),
@@ -395,6 +406,7 @@ def plot_cumulative_chart(
     ))
 
     fig.update_layout(
+        uirevision="cumulative",
         title=dict(text="Cumulative Output (kJ)", x=0.5, xanchor="center"),
         height=420, hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -403,3 +415,140 @@ def plot_cumulative_chart(
         yaxis=dict(title_text="kJ", rangemode="tozero"),
     )
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Altair chart functions (SVG in DOM — no iframe, no flash on live updates)
+# ---------------------------------------------------------------------------
+
+def plot_watts_chart_altair(
+    meta: dict,
+    seconds: list[int],
+    actual_watts: list[float],
+    band: pd.DataFrame | None,
+    y_max: int = 0,
+) -> alt.Chart:
+    df = pd.DataFrame({"second": seconds, "watts": actual_watts})
+    y_scale = alt.Scale(domainMin=0, domainMax=y_max) if y_max > 0 else alt.Scale(zero=True)
+    x_enc = alt.X("second:Q", axis=alt.Axis(title="Time into ride", labelExpr=_MM_SS,
+                                             tickCount=max(len(seconds) // 60, 1)))
+
+    line = alt.Chart(df).mark_line(color="tomato", strokeWidth=1.3).encode(
+        x=x_enc,
+        y=alt.Y("watts:Q", scale=y_scale, axis=alt.Axis(title="Watts")),
+        tooltip=[
+            alt.Tooltip("second:Q", title="Time (s)"),
+            alt.Tooltip("watts:Q", title="Output (W)", format=".0f"),
+        ],
+    )
+
+    layers: list = []
+    if band is not None:
+        bdf = band.reset_index()
+        layers += [
+            alt.Chart(bdf).mark_area(fillOpacity=0.2, color="steelblue").encode(
+                x=alt.X("second:Q"),
+                y=alt.Y("watt_floor:Q", scale=y_scale),
+                y2=alt.Y2("watt_ceiling:Q"),
+            ),
+            alt.Chart(bdf).mark_line(color="steelblue", strokeWidth=1).encode(
+                x=alt.X("second:Q"), y=alt.Y("watt_ceiling:Q", scale=y_scale),
+            ),
+            alt.Chart(bdf).mark_line(color="steelblue", strokeWidth=1).encode(
+                x=alt.X("second:Q"), y=alt.Y("watt_floor:Q", scale=y_scale),
+            ),
+        ]
+    layers.append(line)
+
+    title_str = meta.get("title", "Peloton Workout")
+    instructor = meta.get("instructor_name", "")
+    header = f"{title_str}{'  ·  ' + instructor if instructor else ''}"
+    ts = meta.get("start_time", 0)
+    date_str = datetime.fromtimestamp(ts).strftime("%b %d, %Y  %I:%M %p") if ts else ""
+    kj = (meta.get("total_work") or 0) / 1000
+    subtitle = f"{date_str}  ·  {kj:.0f} kJ total output" if kj else date_str
+    if band is None:
+        subtitle += "  (no instructor target data available)"
+
+    return (
+        alt.layer(*layers)
+        .properties(height=560, title=alt.TitleParams(text=header, subtitle=subtitle))
+    )
+
+
+def plot_band_position_chart_altair(
+    seconds: list[int],
+    actual_watts: list[float],
+    band: pd.DataFrame,
+) -> alt.Chart:
+    positions: list[float | None] = []
+    for sec, w in enumerate(actual_watts):
+        if sec in band.index:
+            fl = band.at[sec, "watt_floor"]
+            ce = band.at[sec, "watt_ceiling"]
+            span = ce - fl
+            positions.append(((w - fl) / span * 100) if span > 0 else 50.0)
+        else:
+            positions.append(None)
+
+    df = pd.DataFrame({"second": seconds, "pct": positions})
+    x_enc = alt.X("second:Q", axis=alt.Axis(title="Time into ride", labelExpr=_MM_SS))
+
+    line = alt.Chart(df).mark_line(color="mediumpurple", strokeWidth=1).encode(
+        x=x_enc,
+        y=alt.Y("pct:Q", axis=alt.Axis(title="Output %")),
+        tooltip=[alt.Tooltip("pct:Q", title="Output %", format=".0f")],
+    )
+
+    rules = alt.layer(
+        alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(
+            color="steelblue", strokeDash=[4, 4], opacity=0.6).encode(y="y:Q"),
+        alt.Chart(pd.DataFrame({"y": [50]})).mark_rule(
+            color="gray", strokeDash=[2, 2], opacity=0.6).encode(y="y:Q"),
+        alt.Chart(pd.DataFrame({"y": [100]})).mark_rule(
+            color="steelblue", strokeDash=[4, 4], opacity=0.6).encode(y="y:Q"),
+    )
+
+    return (
+        alt.layer(rules, line)
+        .properties(height=380)
+    )
+
+
+def plot_cumulative_chart_altair(
+    seconds: list[int],
+    actual_watts: list[float],
+    band: pd.DataFrame,
+) -> alt.Chart:
+    cum_actual = list(np.cumsum(actual_watts) / 1000)
+    band_re = band.reindex(seconds, fill_value=0)
+    cum_max = list(np.cumsum(band_re["watt_ceiling"].values) / 1000)
+    cum_min = list(np.cumsum(band_re["watt_floor"].values) / 1000)
+
+    band_df = pd.DataFrame({"second": seconds, "cum_min": cum_min, "cum_max": cum_max})
+    actual_df = pd.DataFrame({"second": seconds, "kj": cum_actual})
+
+    x_enc = alt.X("second:Q", axis=alt.Axis(title="Time into ride", labelExpr=_MM_SS))
+    y_scale = alt.Scale(zero=True)
+
+    return (
+        alt.layer(
+            alt.Chart(band_df).mark_area(fillOpacity=0.2, color="steelblue").encode(
+                x=x_enc,
+                y=alt.Y("cum_min:Q", scale=y_scale, axis=alt.Axis(title="kJ")),
+                y2=alt.Y2("cum_max:Q"),
+            ),
+            alt.Chart(band_df).mark_line(color="steelblue", strokeWidth=1).encode(
+                x=x_enc, y=alt.Y("cum_max:Q", scale=y_scale),
+            ),
+            alt.Chart(band_df).mark_line(color="steelblue", strokeWidth=1).encode(
+                x=x_enc, y=alt.Y("cum_min:Q", scale=y_scale),
+            ),
+            alt.Chart(actual_df).mark_line(color="tomato", strokeWidth=1.3).encode(
+                x=x_enc,
+                y=alt.Y("kj:Q", scale=y_scale),
+                tooltip=[alt.Tooltip("kj:Q", title="kJ", format=".1f")],
+            ),
+        )
+        .properties(height=420, title="Cumulative Output (kJ)")
+    )
