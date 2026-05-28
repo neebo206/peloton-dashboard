@@ -95,8 +95,8 @@ class PelotonClient:
 
     @staticmethod
     def token_valid(token: str | None, margin_s: int = 300) -> bool:
-        """True if the token exists and doesn't expire within margin_s seconds."""
-        if not token:
+        """True if the token is a 3-part JWT that doesn't expire within margin_s seconds."""
+        if not token or token.count(".") != 2:
             return False
         try:
             exp = PelotonClient._jwt_claims(token).get("exp", 0)
@@ -203,33 +203,31 @@ class PelotonClient:
                         pass
 
                 if not captured:
-                    # Fallback: pull token directly from Auth0's localStorage cache.
-                    # Prioritise the structured cache entry so we get access_token,
-                    # not an id_token or other JWT that happens to start with eyJ.
+                    # Fallback: extract access_token from Auth0's localStorage cache.
+                    # Use regex to find "access_token":"eyJ..." anywhere in any value
+                    # so we don't accidentally return metadata or id_tokens.
                     token_js = page.evaluate("""() => {
-                        // Pass 1: Auth0 SPA SDK structured cache
-                        for (const store of [localStorage, sessionStorage]) {
+                        const stores = [localStorage, sessionStorage];
+                        // Pass 1: regex search for access_token field in any JSON blob
+                        for (const store of stores) {
                             for (let i = 0; i < store.length; i++) {
                                 const val = store.getItem(store.key(i)) || '';
-                                try {
-                                    const o = JSON.parse(val);
-                                    if (o && o.body && o.body.access_token)
-                                        return o.body.access_token;
-                                    if (o && o.access_token) return o.access_token;
-                                } catch (e) {}
+                                const m = val.match(/"access_token":"(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)"/);
+                                if (m) return m[1];
                             }
                         }
-                        // Pass 2: raw JWT string (less reliable)
-                        for (const store of [localStorage, sessionStorage]) {
+                        // Pass 2: raw three-part JWT (header.payload.sig)
+                        for (const store of stores) {
                             for (let i = 0; i < store.length; i++) {
                                 const val = store.getItem(store.key(i)) || '';
-                                if (val.startsWith('eyJ')) return val;
+                                if (/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(val))
+                                    return val;
                             }
                         }
                         return null;
                     }""")
                     if token_js:
-                        print(f"[peloton] token captured from storage, prefix={token_js[:20]}")
+                        print(f"[peloton] token captured from storage, prefix={token_js[:20]}, len={len(token_js)}")
                         captured.append(token_js)
                     else:
                         print("[peloton] no token found in localStorage/sessionStorage")
