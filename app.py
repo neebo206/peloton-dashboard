@@ -136,7 +136,12 @@ def _show_login() -> None:
                         unsafe_allow_html=True,
                     )
 
-                with st.spinner(f"Checking with {instructor} at Peloton to see if you're legit..."):
+                st.markdown(
+                    f'<p style="text-align:center;color:#555;font-size:0.95rem">'
+                    f'Checking with {instructor} at Peloton to see if you\'re legit...</p>',
+                    unsafe_allow_html=True,
+                )
+                with st.spinner(""):
                     try:
                         token = PelotonClient.get_token_via_playwright(email, password)
                         if not PelotonClient.token_valid(token):
