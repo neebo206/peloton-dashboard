@@ -318,18 +318,35 @@ class PelotonClient:
                     pwd_input.click()
                     pwd_input.press_sequentially(password, delay=50)
                     pwd_input.press("Enter")
+                    # Short wait — wrong credentials settle quickly on the
+                    # same page; correct ones redirect within a few seconds.
                     try:
-                        page.wait_for_load_state("networkidle", timeout=60_000)
+                        page.wait_for_load_state("networkidle", timeout=20_000)
+                    except PWTimeout:
+                        pass
+
+                    # Detect wrong password before Xvfb has time to crash
+                    if not captured and "auth.onepeloton.com/login" in page.url:
+                        browser.close()
+                        raise RuntimeError(
+                            "Incorrect username or password. Please try again."
+                        )
+
+                    # Give the full auth redirect chain time to finish
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=40_000)
                     except PWTimeout:
                         pass
 
                 try:
-                    page.wait_for_load_state("networkidle", timeout=30_000)
+                    page.wait_for_load_state("networkidle", timeout=15_000)
                 except PWTimeout:
                     pass
 
                 browser.close()
 
+        except RuntimeError:
+            raise
         except Exception as exc:
             raise RuntimeError(f"Browser login failed: {exc}")
         finally:
