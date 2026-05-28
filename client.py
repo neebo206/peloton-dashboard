@@ -242,15 +242,12 @@ class PelotonClient:
         captured: list[str] = []
 
         def on_request(req):
-            # Only capture tokens from Peloton's actual data API to avoid
-            # picking up internal auth/analytics JWTs from auth.onepeloton.com
+            # Only capture tokens from Peloton's actual API
             if "api.onepeloton.com" not in req.url:
                 return
             auth = req.headers.get("authorization", "")
             if auth.startswith("Bearer ") and not captured:
-                tok = auth[7:]
-                print(f"[peloton] token from {req.url[:60]}, len={len(tok)}", flush=True)
-                captured.append(tok)
+                captured.append(auth[7:])
 
         chromium_path = PelotonClient._find_chromium()
         if not chromium_path:
@@ -260,8 +257,9 @@ class PelotonClient:
                 check=False, capture_output=True,
             )
 
-        # Start a virtual display so Chrome can run in headed mode,
-        # bypassing PerimeterX headless-browser detection.
+        # Start a virtual X11 display so Chrome runs in headed mode.
+        # PerimeterX blocks headless browsers on datacenter IPs; a headed
+        # browser with Xvfb has a normal fingerprint and passes those checks.
         import os as _os, shutil as _shutil, subprocess as _sp, time as _tm
         xvfb_proc = None
         if _shutil.which("Xvfb") and not _os.environ.get("DISPLAY"):
@@ -271,10 +269,6 @@ class PelotonClient:
             )
             _tm.sleep(0.5)
             _os.environ["DISPLAY"] = ":99"
-            print("[peloton] Xvfb started, Chrome running headed", flush=True)
-        else:
-            print(f"[peloton] no Xvfb (which={_shutil.which('Xvfb')!r} "
-                  f"DISPLAY={_os.environ.get('DISPLAY')!r}), headless", flush=True)
 
         headed = bool(_os.environ.get("DISPLAY"))
 
@@ -301,14 +295,9 @@ class PelotonClient:
                     locale="en-US",
                 )
                 page = ctx.new_page()
-                try:
-                    from playwright_stealth import stealth_sync
-                    stealth_sync(page)
-                    print("[peloton] playwright-stealth applied", flush=True)
-                except ImportError:
-                    page.add_init_script(
-                        "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
-                    )
+                page.add_init_script(
+                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
+                )
                 page.on("request", on_request)
 
                 page.goto("https://members.onepeloton.com/login",
@@ -321,7 +310,6 @@ class PelotonClient:
                         timeout=6_000,
                     )
                 except PWTimeout:
-                    print(f"[peloton] filling form at {page.url[:80]}", flush=True)
                     email_input = page.locator('input[name="usernameOrEmail"]')
                     email_input.wait_for(state="visible", timeout=10_000)
                     email_input.click()
@@ -330,9 +318,6 @@ class PelotonClient:
                     pwd_input.click()
                     pwd_input.press_sequentially(password, delay=50)
                     pwd_input.press("Enter")
-                    # Don't check for a specific URL — the Auth0 redirect
-                    # chain may pass through domains that wouldn't match.
-                    # Just wait for the network to settle.
                     try:
                         page.wait_for_load_state("networkidle", timeout=60_000)
                     except PWTimeout:
@@ -343,50 +328,6 @@ class PelotonClient:
                 except PWTimeout:
                     pass
 
-                import re as _re, sys as _sys
-
-                print(f"[peloton] post-login url={page.url[:80]}", flush=True)
-
-                if not captured:
-                    # Trigger a direct API fetch from inside the page so the SPA's
-                    # auth interceptor adds the Bearer header — on_request will catch it.
-                    try:
-                        page.evaluate(
-                            "async () => { try { await fetch("
-                            "'https://api.onepeloton.com/api/me',"
-                            " {credentials:'include'}); } catch(e) {} }"
-                        )
-                        page.wait_for_timeout(3_000)
-                    except Exception:
-                        pass
-
-                if not captured:
-                    # Use Playwright's storage_state() — more reliable than
-                    # page.evaluate because it reads directly from the browser context.
-                    try:
-                        storage = ctx.storage_state()
-                        for origin in storage.get("origins", []):
-                            print(f"[peloton] storage origin={origin['origin']}, "
-                                  f"ls_keys={[i['name'][:40] for i in origin.get('localStorage', [])]}", flush=True)
-                            for item in origin.get("localStorage", []):
-                                val = item.get("value", "")
-                                m = _re.search(
-                                    r'"access_token"\s*:\s*"(eyJ[A-Za-z0-9._-]{100,})"', val
-                                )
-                                if m:
-                                    tok = m.group(1)
-                                    print(f"[peloton] access_token found in storage_state "
-                                          f"len={len(tok)}", flush=True)
-                                    captured.append(tok)
-                                    break
-                            if captured:
-                                break
-                        if not captured:
-                            print("[peloton] no access_token in storage_state", flush=True)
-                    except Exception as exc:
-                        print(f"[peloton] storage_state error: {exc}", flush=True)
-
-                _sys.stdout.flush()
                 browser.close()
 
         except Exception as exc:

@@ -42,31 +42,18 @@ def _show_login() -> None:
                 else:
                     instructor = random.choice(_INSTRUCTORS)
                     with st.spinner(f"Checking with {instructor} at Peloton to see if you're legit..."):
-                        token  = None
-                        errors = {}
-                        for name, fn in (
-                            ("HTTP",      PelotonClient.get_token_via_http),
-                            ("Playwright",PelotonClient.get_token_via_playwright),
-                        ):
-                            try:
-                                token = fn(email, password)
-                                if PelotonClient.token_valid(token):
-                                    break
-                                errors[name] = f"invalid token (len={len(token or '')})"
-                                token = None
-                            except Exception as exc:
-                                errors[name] = str(exc)
-                                token = None
-
-                        if token:
-                            st.session_state.peloton_token = token
-                            st.session_state.peloton_email = email
-                            st.session_state.login_instructor = instructor
-                            st.cache_data.clear()
-                            st.rerun()
-                        else:
-                            for name, msg in errors.items():
-                                st.error(f"{name}: {msg}")
+                        try:
+                            token = PelotonClient.get_token_via_playwright(email, password)
+                            if not PelotonClient.token_valid(token):
+                                st.error("Login returned an invalid token. Please try again.")
+                            else:
+                                st.session_state.peloton_token = token
+                                st.session_state.peloton_email = email
+                                st.session_state.login_instructor = instructor
+                                st.cache_data.clear()
+                                st.rerun()
+                        except Exception as exc:
+                            st.error(f"Login failed: {exc}")
 
         with tab_manual:
             st.caption(
@@ -260,6 +247,6 @@ meta = {
 
 fig = plot_workout_plotly(meta, perf, target, estimate_watts)
 if fig:
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 else:
     st.error("No output data found for this workout.")
