@@ -350,18 +350,17 @@ def plot_band_position_chart(
     fig.add_trace(go.Scatter(
         x=seconds, y=positions,
         mode="lines", line=dict(color="mediumpurple", width=1),
-        name="Band position %",
+        name="Total Output %",
     ))
     for y_val, color, dash in [(0, "steelblue", "dash"), (100, "steelblue", "dash"), (50, "gray", "dot")]:
         fig.add_hline(y=y_val, line_color=color, line_dash=dash, line_width=0.8)
 
     fig.update_layout(
-        title=dict(text="Band Position", x=0.5, xanchor="center"),
         height=380, hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(t=60),
+        margin=dict(t=20),
         xaxis=_x_ticks(len(seconds)),
-        yaxis=dict(title_text="Band %"),
+        yaxis=dict(title_text="Output %"),
     )
     return fig
 

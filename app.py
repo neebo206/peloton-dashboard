@@ -286,7 +286,7 @@ _ALL_CHARTS = ["cumulative", "watts", "band_position"]
 _CHART_LABELS = {
     "cumulative":    "Cumulative Output (kJ)",
     "watts":         "Output (W)",
-    "band_position": "Band Position %",
+    "band_position": "Total Output Percentage",
 }
 _LABEL_TO_ID = {v: k for k, v in _CHART_LABELS.items()}
 
@@ -325,6 +325,15 @@ for chart_id in charts:
             use_container_width=True,
         )
     elif chart_id == "band_position" and band is not None:
+        _tooltip = (
+            "Total output as a percentage of the maximum score defined by "
+            "upper limits of the instructor’s cadence and resistance."
+        )
+        st.markdown(
+            f'<p style="font-size:1rem;font-weight:600;cursor:help;margin-bottom:0" '
+            f'title="{_tooltip}">Total Output Percentage &nbsp;&#x2139;&#xFE0F;</p>',
+            unsafe_allow_html=True,
+        )
         st.plotly_chart(
             plot_band_position_chart(seconds, smoothed_w, band),
             use_container_width=True,
