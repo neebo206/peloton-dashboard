@@ -113,6 +113,15 @@ class PelotonClient:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _find_chromium() -> str | None:
+        import shutil
+        for name in ("chromium-browser", "chromium", "google-chrome-stable", "google-chrome"):
+            path = shutil.which(name)
+            if path:
+                return path
+        return None
+
+    @staticmethod
     def get_token_via_playwright(email: str, password: str) -> str:
         """
         Log in via a headless browser and return the Bearer token.
@@ -134,7 +143,11 @@ class PelotonClient:
 
         try:
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
+                chromium_path = PelotonClient._find_chromium()
+                launch_kwargs: dict = {"headless": True}
+                if chromium_path:
+                    launch_kwargs["executable_path"] = chromium_path
+                browser = pw.chromium.launch(**launch_kwargs)
                 ctx = browser.new_context()
                 page = ctx.new_page()
                 page.on("request", on_request)
