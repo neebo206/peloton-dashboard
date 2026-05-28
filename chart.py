@@ -42,6 +42,7 @@ def _find_intervals(data: dict | list) -> list[dict] | None:
 def build_target_band(
     target_data: dict | list | None,
     watt_fn: Callable[[float, float], float],
+    offset_s: int = 0,
 ) -> pd.DataFrame | None:
     if not target_data:
         return None
@@ -82,7 +83,9 @@ def build_target_band(
         floor_w = watt_fn(c_min, r_min)
         ceiling_w = watt_fn(c_max, r_max)
 
-        for sec in range(start, end + 1):
+        for sec in range(start + offset_s, end + offset_s + 1):
+            if sec < 0:
+                continue
             records.append({
                 "second": sec,
                 "watt_floor": floor_w,
@@ -431,7 +434,8 @@ def plot_watts_chart_altair(
     df = pd.DataFrame({"second": seconds, "watts": actual_watts})
     y_scale = alt.Scale(domainMin=0, domainMax=y_max) if y_max > 0 else alt.Scale(zero=True)
     x_enc = alt.X("second:Q", axis=alt.Axis(title="Time into ride", labelExpr=_MM_SS,
-                                             tickCount=max(len(seconds) // 60, 1)))
+                                             tickCount=max(len(seconds) // 300, 5),
+                                             tickMinStep=300))
 
     line = alt.Chart(df).mark_line(color="tomato", strokeWidth=1.3).encode(
         x=x_enc,
@@ -462,7 +466,7 @@ def plot_watts_chart_altair(
 
     title_str = meta.get("title", "Peloton Workout")
     instructor = meta.get("instructor_name", "")
-    header = f"{title_str}{'  ·  ' + instructor if instructor else ''}"
+    header = f"Output by Band  ·  {title_str}{'  ·  ' + instructor if instructor else ''}"
     ts = meta.get("start_time", 0)
     date_str = datetime.fromtimestamp(ts).strftime("%b %d, %Y  %I:%M %p") if ts else ""
     kj = (meta.get("total_work") or 0) / 1000

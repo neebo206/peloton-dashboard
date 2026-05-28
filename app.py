@@ -244,9 +244,15 @@ with st.sidebar:
         "Smoothing window (seconds)", min_value=1, max_value=30, value=10, step=1,
         help="Rolling average over this many seconds. 1 = no smoothing.",
     ))
-    y_max = int(st.number_input(
-        "Y-axis max watts (0 = auto)", min_value=0, max_value=1000, value=0, step=50,
-    ))
+    _adv = st.expander("Advanced")
+    with _adv:
+        y_max = int(st.number_input(
+            "Y-axis max watts (0 = auto)", min_value=0, max_value=1000, value=0, step=50,
+        ))
+        band_offset = int(st.number_input(
+            "Output Band Offset (seconds)", min_value=-120, max_value=60, value=-55, step=5,
+            help="Shift the Total Output Target Band earlier (negative) or later (positive) to align with your output.",
+        ))
     if st.button("Refresh workout list", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
@@ -327,7 +333,7 @@ meta = {
 _ALL_CHARTS = ["cumulative", "watts", "band_position"]
 _CHART_LABELS = {
     "cumulative":    "Cumulative Output (kJ)",
-    "watts":         "Output (W)",
+    "watts":         "Output by Band (W)",
     "band_position": "Total Output Percentage",
 }
 _LABEL_TO_ID = {v: k for k, v in _CHART_LABELS.items()}
@@ -342,9 +348,9 @@ if has_real_ride:
     st.session_state.chart_order = order
 
     if _HAS_SORTABLES:
-        with st.sidebar:
+        with _adv:
             st.divider()
-            st.header("Chart Order")
+            st.subheader("Chart Order")
             st.caption("Drag to reorder")
             sorted_labels = sort_items([_CHART_LABELS[c] for c in st.session_state.chart_order])
             new_order = [_LABEL_TO_ID[l] for l in sorted_labels if l in _LABEL_TO_ID]
@@ -395,7 +401,7 @@ def _render_charts() -> None:
 
     seconds    = list(range(len(actual_w)))
     smoothed_w = smooth_series(actual_w, smooth_n)
-    band       = build_target_band(target, estimate_watts)
+    band       = build_target_band(target, estimate_watts, offset_s=band_offset)
     has_band   = band is not None
 
     charts = list(st.session_state.get("chart_order", _ALL_CHARTS)) if has_band else ["watts"]
