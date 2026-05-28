@@ -177,9 +177,14 @@ class PelotonClient:
                     locale="en-US",
                 )
                 page = ctx.new_page()
-                page.add_init_script(
-                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
-                )
+                try:
+                    from playwright_stealth import stealth_sync
+                    stealth_sync(page)
+                    print("[peloton] playwright-stealth applied", flush=True)
+                except ImportError:
+                    page.add_init_script(
+                        "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
+                    )
                 page.on("request", on_request)
 
                 page.goto("https://members.onepeloton.com/login",
