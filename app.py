@@ -3,8 +3,10 @@
 import contextlib
 import io
 import random
+import time
 from datetime import datetime
 
+import requests
 import streamlit as st
 
 try:
@@ -15,9 +17,81 @@ except ImportError:
 
 _INSTRUCTORS = [
     "Olivia", "Robin", "Alex", "Emma", "Cody",
-    "Ally", "Christine", "Hannah", "Kendall", "Leanne",
+    "Ally", "Christine", "Hannah", "Leanne",
     "Matt", "Jess", "Denis", "Camila", "Ben",
 ]
+
+# Maps the first name we use internally to the exact full name in the Peloton API
+_INSTRUCTOR_FULLNAMES = {
+    "Olivia":    "Olivia Amato",
+    "Robin":     "Robin Arzon",
+    "Alex":      "Alex Toussaint",
+    "Emma":      "Emma Lovewell",
+    "Cody":      "Cody Rigsby",
+    "Ally":      "Ally Love",
+    "Christine": "Christine D'Ercole",
+    "Hannah":    "Hannah Frankson",
+    "Leanne":    "Leanne Hainsby-Alldis",
+    "Matt":      "Matt Wilpers",
+    "Jess":      "Jess King",
+    "Denis":     "Denis Morton",
+    "Camila":    "Camila Ramón",
+    "Ben":       "Ben Alldis",
+}
+
+_INSTRUCTOR_AFFIRMATIONS = {
+    "Olivia":    "Let's go! You showed up — that's everything.",
+    "Robin":     "Sweat is your magic. You just proved it.",
+    "Alex":      "That's what I'm talking about, family! Let's ride!",
+    "Emma":      "Balance, strength, joy — you've got all three. Let's do this.",
+    "Cody":      "Okurr! You're in, boo. Let's get it!",
+    "Ally":      "You are loved, you are worthy, and you are HERE. Let's go!",
+    "Christine": "I am, I can, I will, I do. You just did.",
+    "Hannah":    "You've absolutely got this. Brilliant work getting here.",
+    "Leanne":    "Gorgeous effort getting here. Now let's make it count.",
+    "Matt":      "Metrics don't lie — and neither does showing up. Let's go.",
+    "Jess":      "Welcome to the experience. It's going to be everything.",
+    "Denis":     "Ride your own ride. It starts right now.",
+    "Camila":    "¡Vamos! You're here and you're ready. Let's go!",
+    "Ben":       "No excuses, no shortcuts — just work. Let's get after it.",
+}
+
+
+def _instructor_img_html(img_url: str, caption: str) -> str:
+    """Centered instructor photo with a Peloton-gradient oval ring."""
+    caption_html = (
+        f'<p style="text-align:center;font-size:0.82rem;color:#888;margin-top:6px;font-style:italic">{caption}</p>'
+        if caption else ""
+    )
+    return (
+        '<div style="display:flex;flex-direction:column;align-items:center;margin:12px 0">'
+        '<div style="background:linear-gradient(135deg,#e83c5a,#ff9a3c);'
+        'border-radius:50%;padding:3px;width:158px;height:170px;">'
+        '<div style="border-radius:50%;overflow:hidden;width:152px;height:164px;">'
+        f'<img src="{img_url}" style="width:100%;height:100%;object-fit:cover;object-position:top center">'
+        f'</div></div>{caption_html}</div>'
+    )
+
+
+@st.cache_data(ttl=86400)
+def _instructor_images() -> dict[str, str]:
+    """Fetch first-name → image_url from Peloton's public instructor endpoint."""
+    try:
+        r = requests.get(
+            "https://api.onepeloton.com/api/instructor",
+            params={"limit": 100},
+            headers={"Peloton-Platform": "web"},
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return {}
+        return {
+            item["name"]: item["image_url"]
+            for item in r.json().get("data", [])
+            if item.get("image_url")
+        }
+    except Exception:
+        return {}
 
 from chart import (
     build_target_band,
@@ -54,6 +128,14 @@ def _show_login() -> None:
                 error_spot.error("Enter your email/username and password.")
             else:
                 instructor = random.choice(_INSTRUCTORS)
+                full_name = _INSTRUCTOR_FULLNAMES.get(instructor, instructor)
+                img_url = _instructor_images().get(full_name, "")
+                if img_url:
+                    st.markdown(
+                        _instructor_img_html(img_url, ""),
+                        unsafe_allow_html=True,
+                    )
+
                 with st.spinner(f"Checking with {instructor} at Peloton to see if you're legit..."):
                     try:
                         token = PelotonClient.get_token_via_playwright(email, password)
@@ -64,9 +146,23 @@ def _show_login() -> None:
                             st.session_state.peloton_email = email
                             st.session_state.login_instructor = instructor
                             st.cache_data.clear()
-                            st.rerun()
                     except Exception as exc:
                         error_spot.error(f"Login failed: {exc}")
+
+                if "peloton_token" in st.session_state:
+                    affirmation = _INSTRUCTOR_AFFIRMATIONS.get(instructor, "You've got this!")
+                    st.markdown(
+                        '<p style="text-align:center;font-size:1.5rem;font-weight:700;color:#28a745">'
+                        "✅ Alright — you're in!</p>",
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        f'<p style="text-align:center;font-style:italic;font-size:1rem;color:#555">'
+                        f'💪 &ldquo;{affirmation}&rdquo;</p>',
+                        unsafe_allow_html=True,
+                    )
+                    time.sleep(2)
+                    st.rerun()
 
 
 if "peloton_token" not in st.session_state:
