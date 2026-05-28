@@ -193,45 +193,50 @@ class PelotonClient:
                 except PWTimeout:
                     pass
 
+                import re as _re, sys as _sys
+
+                print(f"[peloton] post-login url={page.url[:80]}", flush=True)
+
                 if not captured:
-                    # Navigate to overview which triggers many API calls
-                    page.goto("https://members.onepeloton.com/members/me/overview",
-                              timeout=30_000)
+                    # Trigger a direct API fetch from inside the page so the SPA's
+                    # auth interceptor adds the Bearer header — on_request will catch it.
                     try:
-                        page.wait_for_load_state("networkidle", timeout=30_000)
-                    except PWTimeout:
+                        page.evaluate(
+                            "async () => { try { await fetch("
+                            "'https://api.onepeloton.com/api/me',"
+                            " {credentials:'include'}); } catch(e) {} }"
+                        )
+                        page.wait_for_timeout(3_000)
+                    except Exception:
                         pass
 
                 if not captured:
-                    # Fallback: extract access_token from Auth0's localStorage cache.
-                    # Use regex to find "access_token":"eyJ..." anywhere in any value
-                    # so we don't accidentally return metadata or id_tokens.
-                    token_js = page.evaluate("""() => {
-                        const stores = [localStorage, sessionStorage];
-                        // Pass 1: regex search for access_token field in any JSON blob
-                        for (const store of stores) {
-                            for (let i = 0; i < store.length; i++) {
-                                const val = store.getItem(store.key(i)) || '';
-                                const m = val.match(/"access_token":"(eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+)"/);
-                                if (m) return m[1];
-                            }
-                        }
-                        // Pass 2: raw three-part JWT (header.payload.sig)
-                        for (const store of stores) {
-                            for (let i = 0; i < store.length; i++) {
-                                const val = store.getItem(store.key(i)) || '';
-                                if (/^eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(val))
-                                    return val;
-                            }
-                        }
-                        return null;
-                    }""")
-                    if token_js:
-                        print(f"[peloton] token captured from storage, prefix={token_js[:20]}, len={len(token_js)}")
-                        captured.append(token_js)
-                    else:
-                        print("[peloton] no token found in localStorage/sessionStorage")
+                    # Use Playwright's storage_state() — more reliable than
+                    # page.evaluate because it reads directly from the browser context.
+                    try:
+                        storage = ctx.storage_state()
+                        for origin in storage.get("origins", []):
+                            print(f"[peloton] storage origin={origin['origin']}, "
+                                  f"ls_keys={[i['name'][:40] for i in origin.get('localStorage', [])]}", flush=True)
+                            for item in origin.get("localStorage", []):
+                                val = item.get("value", "")
+                                m = _re.search(
+                                    r'"access_token"\s*:\s*"(eyJ[A-Za-z0-9._-]{100,})"', val
+                                )
+                                if m:
+                                    tok = m.group(1)
+                                    print(f"[peloton] access_token found in storage_state "
+                                          f"len={len(tok)}", flush=True)
+                                    captured.append(tok)
+                                    break
+                            if captured:
+                                break
+                        if not captured:
+                            print("[peloton] no access_token in storage_state", flush=True)
+                    except Exception as exc:
+                        print(f"[peloton] storage_state error: {exc}", flush=True)
 
+                _sys.stdout.flush()
                 browser.close()
 
         except Exception as exc:
