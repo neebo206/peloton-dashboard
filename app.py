@@ -28,55 +28,30 @@ def _show_login() -> None:
     st.title("Peloton Dashboard")
     _, col, _ = st.columns([1, 1, 1])
     with col:
-        tab_auto, tab_manual = st.tabs(["Sign in", "Paste token"])
+        st.subheader("Sign in")
+        with st.form("login_form"):
+            email    = st.text_input("Email or username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Login", use_container_width=True)
 
-        with tab_auto:
-            with st.form("login_form"):
-                email    = st.text_input("Email or username")
-                password = st.text_input("Password", type="password")
-                submitted = st.form_submit_button("Login", use_container_width=True)
-
-            if submitted:
-                if not email or not password:
-                    st.error("Enter your email/username and password.")
-                else:
-                    instructor = random.choice(_INSTRUCTORS)
-                    with st.spinner(f"Checking with {instructor} at Peloton to see if you're legit..."):
-                        try:
-                            token = PelotonClient.get_token_via_playwright(email, password)
-                            if not PelotonClient.token_valid(token):
-                                st.error("Login returned an invalid token. Please try again.")
-                            else:
-                                st.session_state.peloton_token = token
-                                st.session_state.peloton_email = email
-                                st.session_state.login_instructor = instructor
-                                st.cache_data.clear()
-                                st.rerun()
-                        except Exception as exc:
-                            st.error(f"Login failed: {exc}")
-
-        with tab_manual:
-            st.caption(
-                "Open [members.onepeloton.com](https://members.onepeloton.com) in your browser, "
-                "press **F12 → Network**, reload, click any request to "
-                "`api.onepeloton.com`, and copy the value after `Authorization: Bearer `."
-            )
-            with st.form("token_form"):
-                raw = st.text_input("Bearer token", type="password",
-                                    placeholder="eyJ…")
-                tok_submitted = st.form_submit_button("Use this token",
-                                                      use_container_width=True)
-            if tok_submitted:
-                token = raw.strip().removeprefix("Bearer ").strip()
-                if not token:
-                    st.error("Paste your Bearer token.")
-                elif not PelotonClient.token_valid(token):
-                    st.error("That doesn't look like a valid token — make sure you copied the full value.")
-                else:
-                    st.session_state.peloton_token = token
-                    st.session_state.peloton_email = ""
-                    st.cache_data.clear()
-                    st.rerun()
+        if submitted:
+            if not email or not password:
+                st.error("Enter your email/username and password.")
+            else:
+                instructor = random.choice(_INSTRUCTORS)
+                with st.spinner(f"Checking with {instructor} at Peloton to see if you're legit..."):
+                    try:
+                        token = PelotonClient.get_token_via_playwright(email, password)
+                        if not PelotonClient.token_valid(token):
+                            st.error("Login returned an invalid token. Please try again.")
+                        else:
+                            st.session_state.peloton_token = token
+                            st.session_state.peloton_email = email
+                            st.session_state.login_instructor = instructor
+                            st.cache_data.clear()
+                            st.rerun()
+                    except Exception as exc:
+                        st.error(f"Login failed: {exc}")
 
 
 if "peloton_token" not in st.session_state:
