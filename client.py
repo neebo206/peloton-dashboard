@@ -172,13 +172,12 @@ class PelotonClient:
                     # Fill the login form manually
                     email_input = page.locator('input[name="usernameOrEmail"]')
                     email_input.wait_for(state="visible", timeout=10_000)
+                    email_input.click()
                     email_input.press_sequentially(email, delay=50)
                     pwd_input = page.locator('input[name="password"]')
+                    pwd_input.click()
                     pwd_input.press_sequentially(password, delay=50)
-                    page.wait_for_selector(
-                        'button[type="submit"]:not([disabled])', timeout=10_000
-                    )
-                    page.locator('button[type="submit"]').first.click()
+                    pwd_input.press("Enter")
                     page.wait_for_url(
                         lambda url: "members.onepeloton.com" in url and "/login" not in url,
                         timeout=30_000,
