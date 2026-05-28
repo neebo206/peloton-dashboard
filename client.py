@@ -260,14 +260,33 @@ class PelotonClient:
                 check=False, capture_output=True,
             )
 
+        # Start a virtual display so Chrome can run in headed mode,
+        # bypassing PerimeterX headless-browser detection.
+        import os as _os, shutil as _shutil, subprocess as _sp, time as _tm
+        xvfb_proc = None
+        if _shutil.which("Xvfb") and not _os.environ.get("DISPLAY"):
+            xvfb_proc = _sp.Popen(
+                ["Xvfb", ":99", "-screen", "0", "1280x800x24"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            )
+            _tm.sleep(0.5)
+            _os.environ["DISPLAY"] = ":99"
+            print("[peloton] Xvfb started, Chrome running headed", flush=True)
+        else:
+            print(f"[peloton] no Xvfb (which={_shutil.which('Xvfb')!r} "
+                  f"DISPLAY={_os.environ.get('DISPLAY')!r}), headless", flush=True)
+
+        headed = bool(_os.environ.get("DISPLAY"))
+
         try:
             with sync_playwright() as pw:
                 launch_kwargs: dict = {
-                    "headless": True,
+                    "headless": not headed,
                     "args": [
                         "--disable-blink-features=AutomationControlled",
                         "--no-sandbox",
                         "--disable-dev-shm-usage",
+                        "--disable-gpu",
                     ],
                 }
                 if chromium_path:
@@ -372,6 +391,10 @@ class PelotonClient:
 
         except Exception as exc:
             raise RuntimeError(f"Browser login failed: {exc}")
+        finally:
+            if xvfb_proc:
+                xvfb_proc.terminate()
+                _os.environ.pop("DISPLAY", None)
 
         if not captured:
             raise RuntimeError("Login succeeded but could not capture Bearer token.")
