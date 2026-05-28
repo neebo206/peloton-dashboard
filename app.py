@@ -34,16 +34,18 @@ def _show_login() -> None:
             password = st.text_input("Password", type="password")
             submitted = st.form_submit_button("Login", use_container_width=True)
 
+        error_spot = st.empty()
+
         if submitted:
             if not email or not password:
-                st.error("Enter your email/username and password.")
+                error_spot.error("Enter your email/username and password.")
             else:
                 instructor = random.choice(_INSTRUCTORS)
                 with st.spinner(f"Checking with {instructor} at Peloton to see if you're legit..."):
                     try:
                         token = PelotonClient.get_token_via_playwright(email, password)
                         if not PelotonClient.token_valid(token):
-                            st.error("Login returned an invalid token. Please try again.")
+                            error_spot.error("Login returned an invalid token. Please try again.")
                         else:
                             st.session_state.peloton_token = token
                             st.session_state.peloton_email = email
@@ -51,7 +53,7 @@ def _show_login() -> None:
                             st.cache_data.clear()
                             st.rerun()
                     except Exception as exc:
-                        st.error(f"Login failed: {exc}")
+                        error_spot.error(f"Login failed: {exc}")
 
 
 if "peloton_token" not in st.session_state:
