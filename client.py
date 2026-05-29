@@ -423,7 +423,9 @@ class PelotonClient:
             return None
         resp = self.session.get(f"{BASE_URL}/api/ride/{ride_id}/details", timeout=10)
         resp.raise_for_status()
-        tmd = resp.json().get("target_metrics_data")
+        data = resp.json()
+        tmd = data.get("target_metrics_data")
         if tmd and tmd.get("target_metrics"):
+            tmd["_pedaling_start_offset"] = data.get("ride", {}).get("pedaling_start_offset", 0)
             return tmd
         return None

@@ -249,9 +249,12 @@ with st.sidebar:
         y_max = int(st.number_input(
             "Y-axis max watts (0 = auto)", min_value=0, max_value=1000, value=0, step=50,
         ))
+        if "band_offset" not in st.session_state:
+            st.session_state["band_offset"] = -55
         band_offset = int(st.number_input(
-            "Output Band Offset (seconds)", min_value=-120, max_value=60, value=-55, step=5,
-            help="Shift the Total Output Target Band earlier (negative) or later (positive) to align with your output.",
+            "Output Band Offset (seconds)", min_value=-120, max_value=60, step=5,
+            help="Auto-calculated from ride data. Adjust if the band looks misaligned.",
+            key="band_offset",
         ))
     if st.button("Refresh workout list", use_container_width=True):
         st.cache_data.clear()
@@ -305,7 +308,20 @@ def _label(w: dict) -> str:
 
 
 labels = [_label(w) for w in workouts]
-idx = st.selectbox("Select a ride", range(len(labels)), format_func=lambda i: labels[i])
+
+
+def _on_ride_change() -> None:
+    new_idx = st.session_state.get("_ride_sel", 0)
+    if 0 <= new_idx < len(workouts):
+        rid = (workouts[new_idx].get("ride") or {}).get("id", "")
+        if rid and set(rid) != {"0"}:
+            t = get_target(client.user_id, rid)
+            if t:
+                st.session_state["band_offset"] = -(t.get("_pedaling_start_offset") or 55)
+
+
+idx = st.selectbox("Select a ride", range(len(labels)), format_func=lambda i: labels[i],
+                   key="_ride_sel", on_change=_on_ride_change)
 
 workout    = workouts[idx]
 ride       = workout.get("ride") or {}
