@@ -100,6 +100,8 @@ from chart import (
     plot_cumulative_chart_altair as plot_cumulative_chart,
     plot_watts_chart_altair as plot_watts_chart,
     smooth_series,
+    tracklist_html,
+    watts_with_tracklist_html,
 )
 from client import PelotonClient
 from watt_model import calibrate, estimate_watts
@@ -244,6 +246,7 @@ with st.sidebar:
         "Smoothing window (seconds)", min_value=1, max_value=30, value=10, step=1,
         help="Rolling average over this many seconds. 1 = no smoothing.",
     ))
+    show_tracklist = st.toggle("Show track list", value=True)
     _adv = st.expander("Advanced")
     with _adv:
         y_max = int(st.number_input(
@@ -429,8 +432,29 @@ def _render_charts() -> None:
 
     for chart_id in charts:
         if chart_id == "watts":
+            songs = (target.get("_playlist") or {}).get("songs", []) if target else []
+            has_tracks = show_tracklist and bool(songs)
+            if has_tracks:
+                # Render title as Streamlit markdown so track bars sit between it and the chart
+                _title_str = meta.get("title", "Peloton Workout")
+                _inst = meta.get("instructor_name", "")
+                _header = f"Output by Band  ·  {_title_str}{'  ·  ' + _inst if _inst else ''}"
+                _ts = meta.get("start_time", 0)
+                _kj = (meta.get("total_work") or 0) / 1000
+                _date = datetime.fromtimestamp(_ts).strftime("%b %d, %Y  %I:%M %p") if _ts else ""
+                _sub = f"{_date}  ·  {_kj:.0f} kJ total output" if _kj else _date
+                st.markdown(
+                    f"<p style='text-align:center;font-size:1rem;font-weight:600;margin-bottom:0'>{_header}</p>"
+                    f"<p style='text-align:center;font-size:0.8rem;color:#666;margin-top:0'>{_sub}</p>",
+                    unsafe_allow_html=True,
+                )
+                st.components.v1.html(
+                    tracklist_html(songs, len(actual_w), band_offset),
+                    height=80,
+                )
             st.altair_chart(
-                plot_watts_chart(meta, seconds, smoothed_w, band, y_max),
+                plot_watts_chart(meta, seconds, smoothed_w, band, y_max,
+                                 show_title=not has_tracks),
                 use_container_width=True,
             )
         elif chart_id == "band_position" and band is not None:

@@ -427,5 +427,6 @@ class PelotonClient:
         tmd = data.get("target_metrics_data")
         if tmd and tmd.get("target_metrics"):
             tmd["_pedaling_start_offset"] = data.get("ride", {}).get("pedaling_start_offset", 0)
+            tmd["_playlist"] = data.get("playlist") or {}
             return tmd
         return None

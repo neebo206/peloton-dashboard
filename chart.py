@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json as _json
 from collections.abc import Callable
 from datetime import datetime
 
@@ -430,6 +431,7 @@ def plot_watts_chart_altair(
     actual_watts: list[float],
     band: pd.DataFrame | None,
     y_max: int = 0,
+    show_title: bool = True,
 ) -> alt.Chart:
     df = pd.DataFrame({"second": seconds, "watts": actual_watts})
     y_scale = alt.Scale(domainMin=0, domainMax=y_max) if y_max > 0 else alt.Scale(zero=True)
@@ -474,10 +476,10 @@ def plot_watts_chart_altair(
     if band is None:
         subtitle += "  (no instructor target data available)"
 
-    return (
-        alt.layer(*layers)
-        .properties(height=560, title=alt.TitleParams(text=header, subtitle=subtitle))
-    )
+    props = {"height": 560}
+    if show_title:
+        props["title"] = alt.TitleParams(text=header, subtitle=subtitle, anchor="middle")
+    return alt.layer(*layers).properties(**props)
 
 
 def plot_band_position_chart_altair(
@@ -554,5 +556,105 @@ def plot_cumulative_chart_altair(
                 tooltip=[alt.Tooltip("kj:Q", title="kJ", format=".1f")],
             ),
         )
-        .properties(height=420, title="Cumulative Output (kJ)")
+        .properties(height=420, title=alt.TitleParams(text="Cumulative Output (kJ)", anchor="middle"))
     )
+
+
+# ---------------------------------------------------------------------------
+# Watts chart with Gantt tracklist — rendered as HTML via Vega-Embed so we
+# can use a custom tooltip handler that shows album art.
+# ---------------------------------------------------------------------------
+
+def watts_with_tracklist_html(
+    meta: dict,
+    seconds: list[int],
+    actual_watts: list[float],
+    band: pd.DataFrame | None,
+    y_max: int,
+    songs: list[dict],
+    band_offset: int,
+) -> str:
+    """Kept for import compatibility — delegates to separate helpers."""
+    return tracklist_html(songs, len(seconds), band_offset)
+
+
+def tracklist_html(songs: list[dict], total_s: int, band_offset: int) -> str:
+    """
+    Return an HTML Gantt strip of tracks with album-art hover tooltips.
+    Rendered as a standalone Vega-Embed component, placed below the main chart.
+    """
+
+    # Build track data, aligning times with the performance graph
+    track_data: list[dict] = []
+    for i, s in enumerate(songs):
+        start = max(0, s.get("start_time_offset", 0) + band_offset)
+        if i + 1 < len(songs):
+            end = min(total_s, songs[i + 1].get("start_time_offset", total_s) + band_offset)
+        else:
+            end = total_s
+        if end <= start:
+            continue
+        artists = ", ".join(a.get("artist_name", "") for a in s.get("artists", []))
+        album_obj = s.get("album") or {}
+        track_data.append({
+            "start": start,
+            "end": end,
+            "title": s.get("title", ""),
+            "artist": artists,
+            "album": album_obj.get("name", ""),
+            "image_url": album_obj.get("image_url", ""),
+            "idx": i,
+        })
+
+    _colors = ["#4e79a7","#f28e2b","#e15759","#76b7b2","#59a14f",
+               "#edc948","#b07aa1","#ff9da7","#9c755f","#bab0ac"]
+
+    bars = ""
+    for t in track_data:
+        left  = t["start"] / total_s * 100
+        width = (t["end"] - t["start"]) / total_s * 100
+        color = _colors[t["idx"] % len(_colors)]
+        img_tag = (f'<img src="{t["image_url"]}" style="width:60px;height:60px;'
+                   f'border-radius:4px;object-fit:cover;flex-shrink:0">'
+                   if t["image_url"] else "")
+        tip_html = (f'<div class="tip">{img_tag}'
+                    f'<div>'
+                    f'<div style="font-weight:600;font-size:.88rem">{t["title"]}</div>'
+                    f'<div style="color:#555;font-size:.8rem">{t["artist"]}</div>'
+                    f'<div style="color:#888;font-size:.76rem;font-style:italic">{t["album"]}</div>'
+                    f'</div></div>')
+        bars += (f'<div class="bar" style="left:{left:.3f}%;width:{width:.3f}%;background:{color}">'
+                 f'<span class="label">{t["title"]}</span>'
+                 f'{tip_html}</div>')
+
+    return f"""<!DOCTYPE html>
+<html><head><style>
+body{{margin:0;padding:3px 0;font-family:sans-serif;overflow:hidden}}
+.wrap{{position:relative;width:100%;height:42px}}
+.bar{{position:absolute;height:100%;border-radius:3px;overflow:visible;
+      display:flex;align-items:center;box-sizing:border-box;cursor:default}}
+.label{{padding:0 5px;font-size:11px;color:white;white-space:nowrap;
+        overflow:hidden;pointer-events:none}}
+.tip{{display:none;position:fixed;background:white;border:1px solid #ddd;
+      border-radius:8px;padding:10px 12px;box-shadow:0 3px 12px rgba(0,0,0,.18);
+      z-index:9999;gap:10px;align-items:center;pointer-events:none;
+      max-width:280px;white-space:nowrap}}
+</style></head><body>
+<div class="wrap">{bars}</div>
+<script>
+const bars=document.querySelectorAll('.bar');
+bars.forEach(function(b){{
+  b.addEventListener('mouseenter',function(){{
+    b.querySelector('.tip').style.display='flex';
+  }});
+  b.addEventListener('mouseleave',function(){{
+    b.querySelector('.tip').style.display='none';
+  }});
+  b.addEventListener('mousemove',function(e){{
+    const t=b.querySelector('.tip');
+    t.style.left=Math.min(e.clientX+12,window.innerWidth-300)+'px';
+    t.style.top=Math.max(e.clientY-110,2)+'px';
+  }});
+}});
+</script>
+</body></html>"""
